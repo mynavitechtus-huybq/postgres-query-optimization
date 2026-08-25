@@ -1,0 +1,38 @@
+-- Q4 AFTER — PostgreSQL 17.4, shop_perf
+-- CREATE EXTENSION pg_trgm;
+-- CREATE INDEX idx_customers_email_trgm ON customers USING gin (email gin_trgm_ops);
+-- Cache nóng, 3 lần: 0.450 / 0.412 / 0.904 ms
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM customers WHERE email ILIKE '%user1234%';
+
+Bitmap Heap Scan on customers  (cost=56.25..74.74 rows=5 width=40) (actual time=0.626..0.643 rows=11 loops=1)
+  Recheck Cond: (email ~~* '%user1234%'::text)
+  Heap Blocks: exact=2
+  Buffers: shared hit=47
+  ->  Bitmap Index Scan on idx_customers_email_trgm  (cost=0.00..56.24 rows=5 width=0) (actual time=0.607..0.607 rows=11 loops=1)
+        Index Cond: (email ~~* '%user1234%'::text)
+        Buffers: shared hit=45
+Planning:
+  Buffers: shared hit=91
+Planning Time: 0.974 ms
+Execution Time: 0.760 ms
+
+
+-- Kích thước
+--   customers (bảng)           3664 kB
+--   idx_customers_email_trgm   1904 kB   (52% kích thước bảng)
+--   customers_pkey             1112 kB
+
+
+-- GIỚI HẠN: pattern ngắn hơn 3 ký tự thì GIN trigram VÔ DỤNG
+EXPLAIN (ANALYZE) SELECT * FROM customers WHERE email ILIKE '%12%';
+
+Seq Scan on customers  (cost=0.00..1083.00 rows=2020 width=40) (actual time=0.033..21.622 rows=2475 loops=1)
+  Filter: (email ~~* '%12%'::text)
+  Rows Removed by Filter: 47525
+Planning Time: 0.737 ms
+Execution Time: 21.765 ms
+
+-- => '12' không tách được thành trigram nào đủ 3 ký tự => quay về Seq Scan.
+--    Index vẫn nằm đó, vẫn tốn dung lượng và chi phí ghi, nhưng không giúp gì.

@@ -1,0 +1,33 @@
+-- Q5 — PHƯƠNG ÁN VIẾT LẠI 1: LEFT JOIN + GROUP BY
+-- Đây là lời khuyên kinh điển "correlated subquery thì viết lại thành JOIN".
+-- Kết quả: CHẬM HƠN 4,5 LẦN so với bản gốc.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.id, c.email, count(o.id) AS order_count
+FROM customers c
+LEFT JOIN orders o ON o.customer_id = c.id
+WHERE c.country = 'VN'
+GROUP BY c.id, c.email;
+
+HashAggregate  (cost=23427.32..23526.44 rows=9912 width=37) (actual time=185.770..186.406 rows=9941 loops=1)
+  Group Key: c.id
+  Batches: 1  Memory Usage: 1425kB
+  Buffers: shared hit=9062
+  ->  Hash Right Join  (cost=1206.90..22436.12 rows=198240 width=37) (actual time=3.319..164.910 rows=198769 loops=1)
+        Hash Cond: (o.customer_id = c.id)
+        Buffers: shared hit=9062
+        ->  Seq Scan on orders o  (cost=0.00..18604.00 rows=1000000 width=16) (actual time=0.035..74.155 rows=1000000 loops=1)
+              Buffers: shared hit=8604
+        ->  Hash  (cost=1083.00..1083.00 rows=9912 width=29) (actual time=3.256..3.256 rows=9941 loops=1)
+              Buckets: 16384  Batches: 1  Memory Usage: 728kB
+              Buffers: shared hit=458
+              ->  Seq Scan on customers c  (cost=0.00..1083.00 rows=9912 width=29) (actual time=0.005..2.546 rows=9941 loops=1)
+                    Filter: (country = 'VN'::text)
+                    Rows Removed by Filter: 40059
+                    Buffers: shared hit=458
+Planning Time: 0.577 ms
+Execution Time: 186.838 ms
+
+-- Vì sao chậm hơn: JOIN buộc phải quét sạch 1.000.000 dòng orders rồi mới gom
+-- nhóm, trong khi correlated subquery chỉ tra index đúng 9.941 lần và không
+-- chạm vào bảng orders lần nào (Heap Fetches: 0).

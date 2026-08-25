@@ -1,0 +1,27 @@
+-- Q5 — PHƯƠNG ÁN VIẾT LẠI 2: gom nhóm trước rồi mới join
+-- Kết quả: CÒN TỆ HƠN NỮA — 294 ms.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.id, c.email, COALESCE(o.cnt,0) AS order_count
+FROM customers c
+LEFT JOIN (SELECT customer_id, count(*) AS cnt FROM orders GROUP BY customer_id) o
+  ON o.customer_id = c.id
+WHERE c.country='VN';
+
+Hash Right Join  (cost=24810.90..25901.03 rows=9912 width=37) (actual time=284.221..292.948 rows=9941 loops=1)
+  Hash Cond: (orders.customer_id = c.id)
+  Buffers: shared hit=9062
+  ->  HashAggregate  (cost=23604.00..24085.82 rows=48182 width=16) (actual time=280.302..284.243 rows=50000 loops=1)
+        Group Key: orders.customer_id
+        Batches: 1  Memory Usage: 4881kB
+        Buffers: shared hit=8604
+        ->  Seq Scan on orders  (cost=0.00..18604.00 rows=1000000 width=8) (actual time=0.034..112.929 rows=1000000 loops=1)
+              Buffers: shared hit=8604
+  ->  Hash  (cost=1083.00..1083.00 rows=9912 width=29) (actual time=3.892..3.893 rows=9941 loops=1)
+        ->  Seq Scan on customers c  (rows=9941 loops=1)
+              Filter: (country = 'VN'::text)
+Planning Time: 0.425 ms
+Execution Time: 294.086 ms
+
+-- Vì sao tệ nhất: nó đếm đơn cho CẢ 50.000 khách rồi mới vứt đi 40.059 khách
+-- không phải VN. Làm thừa 5 lần khối lượng cần thiết.

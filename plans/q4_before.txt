@@ -1,0 +1,34 @@
+-- Q4 BEFORE — PostgreSQL 17.4, shop_perf
+-- customers: 50.000 dòng. Query khớp 11 dòng.
+--   'user1234' là chuỗi con => khớp user1234@ và user12340@..user12349@ = 11 dòng
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT * FROM customers WHERE email ILIKE '%user1234%';
+
+Seq Scan on customers  (cost=0.00..1083.00 rows=5 width=40) (actual time=0.406..17.334 rows=11 loops=1)
+  Filter: (email ~~* '%user1234%'::text)
+  Rows Removed by Filter: 49989
+  Buffers: shared hit=458
+Planning:
+  Buffers: shared hit=6
+Planning Time: 0.122 ms
+Execution Time: 17.342 ms
+
+
+-- ĐỐI CHỨNG: chứng minh B-tree thường KHÔNG cứu được
+CREATE INDEX tmp_customers_email ON customers (email);
+
+Seq Scan on customers  (cost=0.00..1083.00 rows=5 width=40) (actual time=0.527..20.988 rows=11 loops=1)
+  Filter: (email ~~* '%user1234%'::text)
+  Rows Removed by Filter: 49989
+  Buffers: shared hit=458
+Planning:
+  Buffers: shared hit=9 read=1
+Planning Time: 0.194 ms
+Execution Time: 20.998 ms
+
+DROP INDEX tmp_customers_email;
+
+-- => cost=0.00..1083.00 GIỐNG HỆT cả hai lần. Planner không hề cân nhắc index.
+--    Không phải "thấy index nhưng chê" — B-tree về cấu trúc không trả lời được
+--    câu hỏi "chuỗi nào CHỨA đoạn này ở giữa".

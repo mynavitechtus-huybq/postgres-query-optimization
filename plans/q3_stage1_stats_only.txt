@@ -1,0 +1,47 @@
+-- Q3 GIAI ĐOẠN 1 — chỉ thêm expression statistics, CHƯA có covering index
+-- CREATE STATISTICS stat_orders_month ON (date_trunc('month', created_at)) FROM orders;
+-- ANALYZE orders;
+--
+-- Mục đích của phép đo tách riêng này: chứng minh phần cải thiện nào đến từ
+-- việc sửa ước lượng của planner, phần nào đến từ index.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT date_trunc('month', created_at) AS month, SUM(total) AS revenue
+FROM orders WHERE created_at >= '2024-01-01' AND status = 'paid'
+GROUP BY 1 ORDER BY 1;
+
+Finalize GroupAggregate  (cost=16634.27..16640.86 rows=25 width=40) (actual time=38.960..40.706 rows=25 loops=1)
+  Group Key: (date_trunc('month'::text, created_at))
+  Buffers: shared hit=8620
+  ->  Gather Merge  (cost=16634.27..16640.11 rows=50 width=40) (actual time=38.957..40.640 rows=75 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=8620
+        ->  Sort  (cost=15634.25..15634.31 rows=25 width=40) (actual time=37.604..37.605 rows=25 loops=3)
+              Sort Key: (date_trunc('month'::text, created_at))
+              Sort Method: quicksort  Memory: 27kB
+              Buffers: shared hit=8620
+              Worker 0:  Sort Method: quicksort  Memory: 27kB
+              Worker 1:  Sort Method: quicksort  Memory: 27kB
+              ->  Partial HashAggregate  (cost=15633.29..15633.67 rows=25 width=40) (actual time=37.585..37.589 rows=25 loops=3)
+                    Group Key: date_trunc('month'::text, created_at)
+                    Batches: 1  Memory Usage: 32kB
+                    Buffers: shared hit=8604
+                    Worker 0:  Batches: 1  Memory Usage: 32kB
+                    Worker 1:  Batches: 1  Memory Usage: 32kB
+                    ->  Parallel Seq Scan on orders  (cost=0.00..15113.76 rows=103906 width=14) (actual time=0.013..28.718 rows=83661 loops=3)
+                          Filter: ((created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone) AND (status = 'paid'::text))
+                          Rows Removed by Filter: 249672
+                          Buffers: shared hit=8604
+Planning:
+  Buffers: shared hit=156 dirtied=1
+Planning Time: 0.311 ms
+Execution Time: 40.765 ms
+
+-- Nhận xét:
+--   * rows ước lượng của GroupAggregate: 255108 -> 25 (khớp thực tế)
+--   * Sort + GroupAggregate 250.983 dòng -> Partial HashAggregate 25 nhóm
+--   * "external merge Disk: 6152kB" biến mất, temp read/written về 0
+--   * Sort còn lại chỉ sắp 25 dòng, quicksort trong 27kB bộ nhớ
+--   * Vẫn Seq Scan 8604 block vì planner bỏ index: 25,1% bảng là quá rộng,
+--     và vẫn phải vào heap lấy cột `total`

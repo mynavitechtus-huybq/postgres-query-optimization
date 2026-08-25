@@ -1,0 +1,37 @@
+-- Q2 BEFORE — PostgreSQL 17.4, shop_perf
+-- Index hiện có: orders_pkey, order_items_pkey, products_pkey,
+--                idx_orders_status_created_at (từ Q1, không liên quan query này)
+-- Wall-clock (DBeaver, 3 lần): 0.409s / 0.298s / 0.296s
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.created_at, p.name, oi.quantity, oi.unit_price
+FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p     ON p.id = oi.product_id
+WHERE o.customer_id = 777;
+
+Gather  (cost=14812.73..55607.81 rows=63 width=38) (actual time=95.677..232.686 rows=51 loops=1)
+  Workers Planned: 2
+  Workers Launched: 2
+  Buffers: shared hit=13052 read=20805
+  ->  Nested Loop  (cost=13812.73..54601.51 rows=26 width=38) (actual time=87.526..224.582 rows=17 loops=3)
+        Buffers: shared hit=13052 read=20805
+        ->  Parallel Hash Join  (cost=13812.45..54593.71 rows=26 width=34) (actual time=87.496..224.376 rows=17 loops=3)
+              Hash Cond: (oi.order_id = o.id)
+              Buffers: shared hit=12897 read=20805
+              ->  Parallel Seq Scan on order_items oi  (cost=0.00..37500.00 rows=1250000 width=26) (actual time=0.050..88.690 rows=1000000 loops=3)
+                    Buffers: shared hit=4614 read=20386
+              ->  Parallel Hash  (cost=13812.33..13812.33 rows=9 width=16) (actual time=78.163..78.164 rows=4 loops=3)
+                    Buckets: 1024  Batches: 1  Memory Usage: 104kB
+                    Buffers: shared hit=8185 read=419
+                    ->  Parallel Seq Scan on orders o  (cost=0.00..13812.33 rows=9 width=16) (actual time=36.845..78.095 rows=4 loops=3)
+                          Filter: (customer_id = 777)
+                          Rows Removed by Filter: 333329
+                          Buffers: shared hit=8185 read=419
+        ->  Index Scan using products_pkey on products p  (cost=0.28..0.30 rows=1 width=20) (actual time=0.011..0.011 rows=1 loops=51)
+              Index Cond: (id = oi.product_id)
+              Buffers: shared hit=155
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.985 ms
+Execution Time: 232.851 ms

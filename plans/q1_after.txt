@@ -1,0 +1,19 @@
+-- Q1 AFTER — PostgreSQL 17.4, shop_perf
+-- Index trên orders tại thời điểm đo:
+--   orders_pkey
+--   idx_orders_status_created_at  ON orders (status, created_at DESC)
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, customer_id, total, created_at
+FROM orders WHERE status = 'paid'
+ORDER BY created_at DESC LIMIT 50;
+
+Limit  (cost=0.42..8.66 rows=50 width=30) (actual time=0.139..0.676 rows=50 loops=1)
+  Buffers: shared hit=45 read=8
+  ->  Index Scan using idx_orders_status_created_at on orders  (cost=0.42..41998.74 rows=255133 width=30) (actual time=0.138..0.672 rows=50 loops=1)
+        Index Cond: (status = 'paid'::text)
+        Buffers: shared hit=45 read=8
+Planning:
+  Buffers: shared hit=25 read=1 dirtied=1
+Planning Time: 1.064 ms
+Execution Time: 0.731 ms
