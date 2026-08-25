@@ -1,0 +1,26 @@
+-- Q1 BEFORE — PostgreSQL 17.4, shop_perf
+-- Index trên orders tại thời điểm đo: chỉ orders_pkey
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, customer_id, total, created_at
+FROM orders WHERE status = 'paid'
+ORDER BY created_at DESC LIMIT 50;
+
+Limit  (cost=18343.73..18349.57 rows=50 width=30) (actual time=76.972..80.550 rows=50 loops=1)
+  Buffers: shared hit=7998 read=680
+  ->  Gather Merge  (cost=18343.73..43149.96 rows=212610 width=30) (actual time=76.966..80.542 rows=50 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=7998 read=680
+        ->  Sort  (cost=17343.71..17609.47 rows=106305 width=30) (actual time=72.978..72.981 rows=41 loops=3)
+              Sort Key: created_at DESC
+              Sort Method: top-N heapsort  Memory: 30kB
+              Buffers: shared hit=7998 read=680
+              Worker 0:  Sort Method: top-N heapsort  Memory: 31kB
+              Worker 1:  Sort Method: top-N heapsort  Memory: 30kB
+              ->  Parallel Seq Scan on orders  (cost=0.00..13812.33 rows=106305 width=30) (actual time=0.186..65.108 rows=83661 loops=3)
+                    Filter: (status = 'paid'::text)
+                    Rows Removed by Filter: 249672
+                    Buffers: shared hit=7924 read=680
+Planning Time: 0.478 ms
+Execution Time: 80.632 ms

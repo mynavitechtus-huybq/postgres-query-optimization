@@ -1,0 +1,26 @@
+-- Q5 — PHƯƠNG ÁN 3: thêm index cho customers.country
+-- Kết quả: không cải thiện (30.262 ms so với 27.498 ms của bản gốc).
+
+CREATE INDEX idx_customers_country ON customers (country) INCLUDE (email);
+
+Bitmap Heap Scan on customers c  (cost=313.23..49017.89 rows=9912 width=37) (actual time=0.975..29.902 rows=9941 loops=1)
+  Recheck Cond: (country = 'VN'::text)
+  Heap Blocks: exact=458                      <-- vẫn đọc đủ 458 block như Seq Scan
+  Buffers: shared hit=30282 read=61
+  ->  Bitmap Index Scan on idx_customers_country  (actual time=0.865..0.865 rows=9941 loops=1)
+        Index Cond: (country = 'VN'::text)
+  SubPlan 1
+    ->  Aggregate  (actual time=0.003..0.003 rows=1 loops=9941)
+          ->  Index Only Scan using idx_orders_customer_id on orders o  (rows=20 loops=9941)
+                Heap Fetches: 0
+                Buffers: shared hit=29824      <-- nút thắt vẫn nằm nguyên ở đây
+Planning Time: 1.066 ms
+Execution Time: 30.262 ms
+
+-- Vì sao vô ích: country='VN' khớp 19,9% bảng — quá rộng để index có lãi
+-- (đúng quy tắc chọn lọc đã học ở Q3). Heap Blocks: exact=458 cho thấy nó
+-- vẫn phải đọc đủ mọi block của bảng.
+-- Và nút thắt thật nằm ở SubPlan (29.824 block), không phải ở khâu quét customers.
+--
+-- => ĐÃ XOÁ index này. Nó chỉ thêm chi phí ghi mà không đổi lại được gì.
+DROP INDEX idx_customers_country;

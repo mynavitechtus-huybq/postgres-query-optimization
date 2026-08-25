@@ -1,0 +1,35 @@
+-- Q5 — THÍ NGHIỆM ĐỐI CHỨNG: bỏ idx_orders_customer_id ra rồi đo lại
+--
+-- Mục đích: chứng minh baseline của Q5 sở dĩ nhanh là NHỜ index tạo ở Q2,
+-- chứ không phải vì correlated subquery vốn dĩ rẻ.
+--
+-- DROP INDEX idx_orders_customer_id;   (đã tạo lại sau khi đo xong)
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.id, c.email,
+  (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS order_count
+FROM customers c WHERE c.country = 'VN';
+
+  Buffers: shared hit=85532822
+  SubPlan 1
+    ->  Aggregate  (cost=21104.05..21104.06 rows=1 width=8) (actual time=22.939..22.939 rows=1 loops=9941)
+          Buffers: shared hit=85532364
+          ->  Seq Scan on orders o  (cost=0.00..21104.00 rows=21 width=0) (actual time=1.140..22.932 rows=20 loops=9941)
+                Filter: (customer_id = c.id)
+                Rows Removed by Filter: 999980
+                Buffers: shared hit=85532364
+Planning Time: 0.401 ms
+JIT:
+  Functions: 10
+  Options: Inlining true, Optimization true, Expressions true, Deforming true
+  Timing: Generation 0.879 ms, Inlining 86.909 ms, Optimization 34.644 ms, Emission 19.987 ms, Total 142.419 ms
+Execution Time: 228254.517 ms      <-- 3 phút 48 giây
+
+-- Con số thật:
+--   9.941 vòng x quét 1.000.000 dòng = 9.941.000.000 dòng được chạm vào
+--   85.532.822 block x 8KB = ~653 GB lưu lượng bộ nhớ đệm
+--   228.254 ms so với 27.5 ms khi có index  =>  chậm hơn 8.300 lần
+--
+-- Đây mới là bộ mặt thật của "N+1 query" khi thiếu index. Postgres thậm chí đã
+-- bật JIT (biên dịch biểu thức sang mã máy) vì ước tính chi phí quá lớn —
+-- bản thân việc thấy JIT trong plan đã là dấu hiệu query đang làm việc quá sức.

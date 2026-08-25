@@ -1,0 +1,32 @@
+-- Q2 AFTER — PostgreSQL 17.4, shop_perf
+-- Index thêm vào: idx_orders_customer_id, idx_order_items_order_id
+-- Wall-clock (DBeaver, 3 lần): 0.007s / 0.001s / 0.002s
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT o.id, o.created_at, p.name, oi.quantity, oi.unit_price
+FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+JOIN products p     ON p.id = oi.product_id
+WHERE o.customer_id = 777;
+
+Nested Loop  (cost=5.30..535.97 rows=63 width=38) (actual time=0.135..1.039 rows=51 loops=1)
+  Buffers: shared hit=255
+  ->  Nested Loop  (cost=5.02..517.07 rows=63 width=34) (actual time=0.121..0.761 rows=51 loops=1)
+        Buffers: shared hit=102
+        ->  Bitmap Heap Scan on orders o  (cost=4.59..85.74 rows=21 width=16) (actual time=0.085..0.213 rows=12 loops=1)
+              Recheck Cond: (customer_id = 777)
+              Heap Blocks: exact=12
+              Buffers: shared hit=15
+              ->  Bitmap Index Scan on idx_orders_customer_id  (cost=0.00..4.58 rows=21 width=0) (actual time=0.055..0.055 rows=12 loops=1)
+                    Index Cond: (customer_id = 777)
+                    Buffers: shared hit=3
+        ->  Index Scan using idx_order_items_order_id on order_items oi  (cost=0.43..20.50 rows=4 width=26) (actual time=0.020..0.044 rows=4 loops=12)
+              Index Cond: (order_id = o.id)
+              Buffers: shared hit=87
+  ->  Index Scan using products_pkey on products p  (cost=0.28..0.30 rows=1 width=20) (actual time=0.005..0.005 rows=1 loops=51)
+        Index Cond: (id = oi.product_id)
+        Buffers: shared hit=153
+Planning:
+  Buffers: shared hit=22
+Planning Time: 1.099 ms
+Execution Time: 1.197 ms

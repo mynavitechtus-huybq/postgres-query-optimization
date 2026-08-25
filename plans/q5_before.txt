@@ -1,0 +1,29 @@
+-- Q5 BASELINE — PostgreSQL 17.4, shop_perf
+-- customers country='VN': 9.941 dòng
+-- Cache nóng, 3 lần: 41.722 / 34.582 / 27.498 ms
+--
+-- LƯU Ý QUAN TRỌNG: baseline này ĐÃ được hưởng lợi từ idx_orders_customer_id
+-- tạo ở Q2. Xem plans/q5_no_fk_index.txt để thấy query này ra sao khi không có
+-- index đó.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT c.id, c.email,
+  (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) AS order_count
+FROM customers c
+WHERE c.country = 'VN';
+
+Seq Scan on customers c  (cost=0.00..49205.76 rows=9912 width=37) (actual time=0.135..41.415 rows=9941 loops=1)
+  Filter: (country = 'VN'::text)
+  Rows Removed by Filter: 40059
+  Buffers: shared hit=29311 read=971
+  SubPlan 1
+    ->  Aggregate  (cost=4.84..4.85 rows=1 width=8) (actual time=0.004..0.004 rows=1 loops=9941)
+          Buffers: shared hit=28853 read=971
+          ->  Index Only Scan using idx_orders_customer_id on orders o  (cost=0.42..4.79 rows=21 width=0) (actual time=0.002..0.003 rows=20 loops=9941)
+                Index Cond: (customer_id = c.id)
+                Heap Fetches: 0
+                Buffers: shared hit=28853 read=971
+Planning:
+  Buffers: shared hit=101 dirtied=1
+Planning Time: 0.494 ms
+Execution Time: 41.722 ms
