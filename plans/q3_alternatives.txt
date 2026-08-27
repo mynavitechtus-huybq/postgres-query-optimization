@@ -4,9 +4,21 @@
 -- =============================================================
 -- ALT-A — CREATE STATISTICS trên biểu thức  (LOẠI: đề bài cấm)
 -- =============================================================
+-- Đây là cách đã dùng ở lần làm trước, trước khi có yêu cầu bỏ CREATE STATISTICS.
+--
 -- CREATE STATISTICS tmp_stat ON (date_trunc('month', created_at)) FROM orders;
 -- ANALYZE orders;
 -- Chạy kèm partial index của V2. Median 5 lần: 20.594 ms (6,54x)
+--
+-- LƯU Ý cấu hình khác nhau giữa hai lần đo:
+--   lần trước : CREATE STATISTICS + idx_orders_paid_month
+--               (status, created_at) INCLUDE (total), 41 MB
+--               153.403 ms -> 21.423 ms
+--               tách hai giai đoạn: thống kê 40.8 ms (3,8x), rồi index (thêm 1,9x)
+--   lần này   : CREATE STATISTICS + idx_orders_paid_created_at
+--               (created_at) INCLUDE (total) WHERE status='paid', 7744 kB
+--               20.594 ms, đo cùng trạng thái bảng với V1..V4
+-- Hai con số gần nhau nhưng không phải đo lại cùng một cấu hình.
 
 Finalize GroupAggregate  (cost=8556.52..8563.11 rows=25 width=40) (actual time=19.750..20.769 rows=25 loops=1)
   Group Key: (date_trunc('month'::text, created_at))

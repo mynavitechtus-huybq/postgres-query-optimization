@@ -51,7 +51,9 @@ CREATE INDEX idx_order_items_order_id ON order_items (order_id);
 --   V4 data model   0.040 ms 3369x   matview bên dưới, đổi lại phải refresh
 
 -- V2 — partial covering index. Query giữ nguyên.
--- Partial nên chỉ chứa ~25% số dòng: 7744 kB thay vì 41 MB.
+-- Thay cho idx_orders_paid_month (status, created_at) INCLUDE (total) của lần
+-- làm trước: thêm WHERE status='paid' nên index chỉ chứa ~25% số dòng,
+-- 7744 kB thay vì 41 MB, mà vẫn cho Heap Fetches: 0.
 -- Kiểm chứng Index Only Scan bằng `Heap Fetches: 0` trong plan.
 -- V3 dùng lại đúng index này.
 CREATE INDEX idx_orders_paid_created_at
