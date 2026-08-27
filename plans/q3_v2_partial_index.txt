@@ -30,12 +30,6 @@ Planning:
 Planning Time: 0.414 ms
 Execution Time: 99.470 ms
 
--- Giải quyết được vấn đề 2, KHÔNG giải quyết được vấn đề 1:
---   Buffers shared   9.571 -> 968      (9,9x ít hơn)
---   Heap Fetches: 0                    Index Only Scan thật sự
---   Scan             ~65 ms -> ~35 ms
---   Sort             vẫn external merge Disk: 6152kB, temp read=769 written=772
---   Ước lượng nhóm   vẫn 250.500 vs thực tế 25
---
--- Sau V2, Sort + Aggregate chiếm ~60/95 ms = 63% tổng thời gian.
--- Nút thắt đã chuyển từ I/O sang aggregation.
+-- Chữa được phần I/O: buffers 9.571 -> 968, Heap Fetches 0, scan ~65 -> ~35 ms.
+-- Sort vẫn external merge 6152 kB, ước lượng vẫn 250.500 vs 25.
+-- Sau V2, sort + aggregate chiếm ~60/95 ms.

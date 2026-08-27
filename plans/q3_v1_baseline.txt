@@ -31,13 +31,6 @@ Planning:
 Planning Time: 0.343 ms
 Execution Time: 111.271 ms
 
--- Phân rã thời gian:
---   Bitmap Heap Scan  ~65 ms  (49%)   đọc 8.604 block = toàn bộ bảng
---   Sort              ~46 ms  (34%)   250.983 dòng, đổ đĩa 6152 kB
---   GroupAggregate    ~21 ms  (16%)   để tạo ra 25 dòng
---
--- Hai vấn đề độc lập:
---   1. Ước lượng số nhóm 253.033 vs thực tế 25 => loại HashAggregate,
---      buộc phải Sort toàn bộ 250.983 dòng, vượt work_mem nên ra đĩa.
---   2. WHERE khớp 25,1% bảng nên index cũ (status, created_at) vẫn phải
---      vào heap lấy cột `total` => Heap Blocks: exact=8604.
+-- Phân rã: scan ~65 ms (49%), sort ~46 ms (34%), aggregate ~21 ms (16%).
+-- Hai vấn đề: ước lượng số nhóm 253.033 vs thực tế 25, và WHERE khớp 25,1%
+-- bảng nên vẫn phải vào heap lấy `total`.

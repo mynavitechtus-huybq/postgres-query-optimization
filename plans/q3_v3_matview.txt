@@ -32,12 +32,7 @@ Execution Time: 0.038 ms
 --   dòng gốc 25 | dòng mv 25 | dòng lệch 0
 --   tổng gốc 128073158.73 | tổng mv 128073158.73
 --
--- CẢNH BÁO MÚI GIỜ — chạy cùng phép kiểm tra trong session Asia/Ho_Chi_Minh:
---   dòng lệch: 50   (toàn bộ 25 dòng mỗi bên không khớp)
---
--- Nguyên nhân: date_trunc('month', created_at) trong query gốc dùng TimeZone của
--- session, nên cùng một dòng dữ liệu sẽ rơi vào tháng khác nhau tuỳ người chạy.
--- Matview chốt cứng 'UTC' để kết quả xác định. Đây là một QUYẾT ĐỊNH NGHIỆP VỤ:
--- báo cáo doanh thu không nên đổi ý nghĩa theo múi giờ của người mở nó.
--- Nếu nghiệp vụ cần chốt theo giờ Việt Nam thì đổi 'UTC' thành 'Asia/Ho_Chi_Minh'
--- trong định nghĩa view và refresh lại.
+-- Cùng phép kiểm tra trong session Asia/Ho_Chi_Minh: 50 dòng lệch.
+-- date_trunc('month', created_at) ở query gốc dùng TimeZone của session nên
+-- cùng một dòng rơi vào tháng khác nhau tuỳ người chạy. Matview chốt 'UTC'.
+-- Cần chốt theo giờ Việt Nam thì đổi trong định nghĩa view rồi refresh lại.

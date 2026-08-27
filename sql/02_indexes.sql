@@ -38,38 +38,24 @@ CREATE INDEX idx_order_items_order_id ON order_items (order_id);
 -- -------------------------------------------------------------
 -- Q3 — Doanh thu theo tháng
 --
--- Đây KHÔNG phải bài toán thiếu index. Index của Q1 đã khớp và đã được dùng,
--- mà query vẫn chậm hơn cả Q1 lúc chưa có index nào.
---
--- Baseline có HAI vấn đề độc lập:
---   1. AGGREGATION — ước lượng số nhóm 253.033 vs thực tế 25. Postgres chỉ thu
---      thập thống kê cho CỘT, không cho BIỂU THỨC, nên với
---      GROUP BY date_trunc('month', created_at) nó đoán số nhóm ≈ số dòng.
---      Hệ quả: loại HashAggregate => Sort 250.983 dòng => vượt work_mem 4MB
---      => đổ ra đĩa (external merge 6152kB).
---   2. I/O — WHERE khớp 25,1% bảng, index cũ (status, created_at) vẫn phải vào
---      heap lấy cột `total` => Heap Blocks: exact=8604, tức toàn bộ bảng.
---
--- V2 — partial covering index. Giải quyết vấn đề 2. Query giữ nguyên.
---   `WHERE status = 'paid'` khiến index chỉ chứa ~25% số dòng => 7744 kB,
---   nhỏ hơn 5 lần so với covering index đầy đủ trên (status, created_at).
---   `INCLUDE (total)` đưa nốt cột cần cộng vào index => Index Only Scan.
---   Kiểm chứng bằng `Heap Fetches: 0` trong plan.
---   133.9 ms -> 95.4 ms | Buffers 9.571 -> 968 block
+-- Baseline 133.9 ms có hai vấn đề độc lập:
+--   aggregation — ước lượng số nhóm 253.033 vs thực tế 25 (Postgres không có
+--     thống kê cho biểu thức) => loại HashAggregate => Sort 250.983 dòng =>
+--     vượt work_mem 4MB => đổ đĩa.
+--   I/O — WHERE khớp 25,1% bảng, index (status, created_at) vẫn phải vào heap
+--     lấy `total` => Heap Blocks: exact=8604.
+
+-- V2 — chữa phần I/O, query giữ nguyên. 133.9 -> 95.4 ms, buffers 9.571 -> 968.
+-- Partial nên chỉ chứa ~25% số dòng: 7744 kB thay vì 41 MB.
+-- Kiểm chứng Index Only Scan bằng `Heap Fetches: 0` trong plan.
 CREATE INDEX idx_orders_paid_created_at
     ON orders (created_at)
     INCLUDE (total)
     WHERE status = 'paid';
 
--- V3 — pre-aggregation. Giải quyết vấn đề 1 bằng cách bỏ hẳn việc aggregate
---   lúc chạy query: 250.983 dòng đã được gộp sẵn thành 25 dòng.
---   95.4 ms -> 0.034 ms | 25 dòng, 40 kB
---
---   Múi giờ được CHỐT CỨNG bằng `AT TIME ZONE 'UTC'`. Query gốc dùng
---   date_trunc('month', created_at) phụ thuộc TimeZone của session, nghĩa là
---   cùng một dòng rơi vào tháng khác nhau tuỳ ai chạy. Với báo cáo doanh thu
---   thì đó là lỗi, không phải tính năng. Đổi 'UTC' thành múi giờ nghiệp vụ nếu
---   cần chốt theo giờ địa phương.
+-- V3 — chữa phần aggregation bằng cách gộp sẵn. 95.4 -> 0.034 ms, 25 dòng, 40 kB.
+-- Chốt 'UTC' vì date_trunc trên timestamptz phụ thuộc TimeZone của session:
+-- chạy ở +07 cho kết quả khác hẳn. Đổi sang múi giờ nghiệp vụ nếu cần.
 CREATE MATERIALIZED VIEW monthly_paid_revenue AS
 SELECT (date_trunc('month', created_at AT TIME ZONE 'UTC'))::date AS month,
        SUM(total) AS revenue
@@ -77,16 +63,15 @@ FROM orders
 WHERE status = 'paid'
 GROUP BY 1;
 
---   UNIQUE index bắt buộc nếu muốn REFRESH ... CONCURRENTLY (không khoá đọc).
+-- UNIQUE index là điều kiện bắt buộc của REFRESH ... CONCURRENTLY.
 CREATE UNIQUE INDEX idx_monthly_paid_revenue_month
     ON monthly_paid_revenue (month);
 
---   REFRESH mất ~63 ms, rẻ hơn MỘT lần chạy query gốc. Bản thân REFRESH cũng
---   hưởng lợi từ partial index ở trên.
---     REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_paid_revenue;
+-- REFRESH ~63 ms, rẻ hơn một lần chạy query gốc, và cũng dùng partial index ở trên.
+--   REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_paid_revenue;
 --
---   Đã đo rồi loại: CREATE STATISTICS (20.7 ms, đề bài cấm) và cột generated
---   (33.6 ms, phải rewrite toàn bảng). Xem plans/q3_alternatives.txt.
+-- Đã đo rồi loại: CREATE STATISTICS (20.7 ms, đề bài cấm) và cột generated
+-- (33.6 ms, rewrite toàn bảng). Xem plans/q3_alternatives.txt.
 
 
 -- -------------------------------------------------------------

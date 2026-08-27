@@ -37,9 +37,8 @@ Planning:
 Planning Time: 0.311 ms
 Execution Time: 20.771 ms
 
--- Sửa đúng vấn đề 1: ước lượng về 25 => HashAggregate => hết Sort, hết đổ đĩa.
--- Nhanh hơn V2 gần 5 lần và giữ được tính realtime.
--- Chỉ bị loại vì ràng buộc của đề bài, không phải vì kém.
+-- Ước lượng về 25 => HashAggregate => hết Sort, hết đổ đĩa.
+-- Nhanh hơn V2 gần 5 lần, giữ được realtime. Loại vì ràng buộc đề bài.
 
 -- =============================================================
 -- ALT-B — Cột generated + thống kê cột thường  (BỊ LOẠI: chi phí schema)
@@ -84,15 +83,11 @@ Planning:
 Planning Time: 0.323 ms
 Execution Time: 33.550 ms
 
--- Vì sao loại:
---   * ALTER TABLE rewrite toàn bảng: 3.875 ms, giữ ACCESS EXCLUSIVE lock suốt
---     thời gian đó — trên bảng production 1 triệu dòng là downtime thật.
---   * Bảng phình 67 MB -> 75 MB, và DROP COLUMN không thu hồi lại được
---     (phải VACUUM FULL, lại thêm một lần khoá bảng).
---   * Mọi INSERT/UPDATE phải tính thêm biểu thức và ghi thêm cột.
---   * Chậm hơn V3 khoảng 1.000 lần cho đúng workload báo cáo mà nó nhắm tới.
+-- Loại vì:
+--   ALTER TABLE rewrite toàn bảng 3.875 ms, giữ ACCESS EXCLUSIVE lock.
+--   Bảng phình 67 -> 75 MB, DROP COLUMN không thu hồi được (phải VACUUM FULL).
+--   Mọi INSERT/UPDATE phải tính thêm biểu thức và ghi thêm cột.
+--   Chậm hơn V3 khoảng 1.000 lần cho workload báo cáo mà nó nhắm tới.
 --
--- Đáng chú ý: planner KHÔNG dùng index nào cho ALT-B mà chọn Parallel Seq Scan.
--- Ép dùng index bằng enable_seqscan=off cho kết quả 87.578 ms, tệ hơn hẳn.
--- Sau khi ước lượng đã đúng và HashAggregate được chọn, quét tuần tự song song
--- là đường đi rẻ nhất — thêm index vào lúc này chỉ tốn dung lượng.
+-- Planner không dùng index nào cho ALT-B mà chọn Parallel Seq Scan.
+-- Ép bằng enable_seqscan=off cho 87.578 ms.

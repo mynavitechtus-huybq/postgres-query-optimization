@@ -14,10 +14,10 @@ Sáu query trên bộ dữ liệu 4 triệu dòng. PostgreSQL 17.4 (Docker), DBe
 | 5 | [Correlated subquery](analysis/q5.md) | Không có vấn đề — index Q2 đã giải quyết | **Không thay đổi gì** | 27,5 ms | — | — |
 | 6 | [`date_trunc` trong `WHERE`](analysis/q6.md) | Hàm bọc lên cột → non-sargable | Viết lại thành khoảng + index `created_at` | 40,9 ms | 5,9 ms | 6,9× |
 
-**Chỉ 2 trong 6 bài được sửa bằng cách thêm index cho cột bị thiếu.** Q3 sửa bằng thống
-kê, Q4 phải đổi loại index, Q5 không sửa gì, Q6 sửa cách viết query. Tiếp cận cả sáu
-bằng cùng một phản xạ "chậm thì thêm index" thì ba bài không được sửa và một bài bị làm
-hỏng.
+Chỉ 2 trong 6 bài được sửa bằng cách thêm index cho cột bị thiếu. Q3 phải bỏ hẳn việc
+aggregate lúc chạy query, Q4 phải đổi loại index, Q5 không sửa gì, Q6 sửa cách viết
+query. Tiếp cận cả sáu bằng cùng một phản xạ "chậm thì thêm index" thì ba bài không
+được sửa và một bài bị làm hỏng.
 
 ## Cấu trúc
 
@@ -66,7 +66,7 @@ kế hoạch — ở Q2, `Planning Time` chiếm 48% tổng thời gian sau tố
 nhiều đọc ít, vài index trong số này không đáng giữ.
 
 `monthly_paid_revenue` cần `REFRESH` (~63 ms) để không lệch dữ liệu. Con số 3.937× của
-Q3 chỉ đúng khi đọc nhiều hơn ghi; refresh mỗi lần đọc thì nó chậm hơn cả V2.
+Q3 chỉ đúng khi đọc nhiều hơn ghi, refresh mỗi lần đọc thì nó chậm hơn cả V2.
 
 ## Còn nợ
 
