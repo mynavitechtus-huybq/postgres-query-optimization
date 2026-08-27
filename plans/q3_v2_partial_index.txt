@@ -1,0 +1,41 @@
+-- Q3 V2 — PARTIAL COVERING INDEX, query giữ nguyên
+--
+-- CREATE INDEX idx_orders_paid_created_at
+--   ON orders (created_at) INCLUDE (total) WHERE status = 'paid';
+--
+-- Kích thước index: 7744 kB
+-- Median 5 lần chạy nóng: 95.443 ms  (88.785 95.220 96.481 104.370 95.443)
+-- Đo lại sau khi revert các thí nghiệm: 91.545 ms — ổn định
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT date_trunc('month', created_at) AS month, SUM(total) AS revenue
+FROM orders
+WHERE created_at >= '2024-01-01' AND status = 'paid'
+GROUP BY 1
+ORDER BY 1;
+
+GroupAggregate  (cost=35660.06..41301.55 rows=250733 width=40) (actual time=63.024..98.966 rows=25 loops=1)
+  Group Key: (date_trunc('month'::text, created_at))
+  Buffers: shared hit=968, temp read=769 written=772
+  ->  Sort  (cost=35660.06..36286.89 rows=250733 width=14) (actual time=62.711..77.728 rows=250983 loops=1)
+        Sort Key: (date_trunc('month'::text, created_at))
+        Sort Method: external merge  Disk: 6152kB
+        Buffers: shared hit=968, temp read=769 written=772
+        ->  Index Only Scan using idx_orders_paid_created_at on orders  (cost=0.42..8887.08 rows=250733 width=14) (actual time=0.028..37.017 rows=250983 loops=1)
+              Index Cond: (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone)
+              Heap Fetches: 0
+              Buffers: shared hit=965
+Planning:
+  Buffers: shared hit=187
+Planning Time: 0.414 ms
+Execution Time: 99.470 ms
+
+-- Giải quyết được vấn đề 2, KHÔNG giải quyết được vấn đề 1:
+--   Buffers shared   9.571 -> 968      (9,9x ít hơn)
+--   Heap Fetches: 0                    Index Only Scan thật sự
+--   Scan             ~65 ms -> ~35 ms
+--   Sort             vẫn external merge Disk: 6152kB, temp read=769 written=772
+--   Ước lượng nhóm   vẫn 250.500 vs thực tế 25
+--
+-- Sau V2, Sort + Aggregate chiếm ~60/95 ms = 63% tổng thời gian.
+-- Nút thắt đã chuyển từ I/O sang aggregation.

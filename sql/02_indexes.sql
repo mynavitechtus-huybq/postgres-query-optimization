@@ -41,26 +41,52 @@ CREATE INDEX idx_order_items_order_id ON order_items (order_id);
 -- Đây KHÔNG phải bài toán thiếu index. Index của Q1 đã khớp và đã được dùng,
 -- mà query vẫn chậm hơn cả Q1 lúc chưa có index nào.
 --
--- Vấn đề 1: Postgres chỉ có thống kê cho CỘT, không cho BIỂU THỨC. Với
---   GROUP BY date_trunc('month', created_at) nó đoán số nhóm ≈ số dòng
---   (255.108 thay vì 25) => loại HashAggregate => Sort 250.983 dòng =>
---   vượt work_mem 4MB => đổ ra đĩa (external merge 6152kB).
--- Vấn đề 2: WHERE khớp 25,1% bảng — quá rộng để index có lãi, và vẫn phải
---   vào heap lấy cột `total` (8.604 block).
+-- Baseline có HAI vấn đề độc lập:
+--   1. AGGREGATION — ước lượng số nhóm 253.033 vs thực tế 25. Postgres chỉ thu
+--      thập thống kê cho CỘT, không cho BIỂU THỨC, nên với
+--      GROUP BY date_trunc('month', created_at) nó đoán số nhóm ≈ số dòng.
+--      Hệ quả: loại HashAggregate => Sort 250.983 dòng => vượt work_mem 4MB
+--      => đổ ra đĩa (external merge 6152kB).
+--   2. I/O — WHERE khớp 25,1% bảng, index cũ (status, created_at) vẫn phải vào
+--      heap lấy cột `total` => Heap Blocks: exact=8604, tức toàn bộ bảng.
 --
--- Sửa 1 — dạy planner về biểu thức. Không index, không sửa query: 3,8x
-CREATE STATISTICS stat_orders_month ON (date_trunc('month', created_at)) FROM orders;
-ANALYZE orders;   -- bắt buộc: CREATE STATISTICS chỉ khai báo, ANALYZE mới thu thập
+-- V2 — partial covering index. Giải quyết vấn đề 2. Query giữ nguyên.
+--   `WHERE status = 'paid'` khiến index chỉ chứa ~25% số dòng => 7744 kB,
+--   nhỏ hơn 5 lần so với covering index đầy đủ trên (status, created_at).
+--   `INCLUDE (total)` đưa nốt cột cần cộng vào index => Index Only Scan.
+--   Kiểm chứng bằng `Heap Fetches: 0` trong plan.
+--   133.9 ms -> 95.4 ms | Buffers 9.571 -> 968 block
+CREATE INDEX idx_orders_paid_created_at
+    ON orders (created_at)
+    INCLUDE (total)
+    WHERE status = 'paid';
 
--- Sửa 2 — covering index để khỏi chạm vào bảng (Index Only Scan): thêm 1,9x
---   Query cần đúng 3 cột: status (lọc), created_at (lọc + gom nhóm), total (cộng).
---   INCLUDE đưa `total` vào index mà không dùng nó để tìm kiếm.
---   Kiểm chứng bằng `Heap Fetches: 0` trong plan — không có dòng đó thì
---   "Index Only" chỉ đúng trên tên gọi.
---   Cái giá: index này nặng 41 MB trên bảng 67 MB.
-CREATE INDEX idx_orders_paid_month ON orders (status, created_at) INCLUDE (total);
+-- V3 — pre-aggregation. Giải quyết vấn đề 1 bằng cách bỏ hẳn việc aggregate
+--   lúc chạy query: 250.983 dòng đã được gộp sẵn thành 25 dòng.
+--   95.4 ms -> 0.034 ms | 25 dòng, 40 kB
+--
+--   Múi giờ được CHỐT CỨNG bằng `AT TIME ZONE 'UTC'`. Query gốc dùng
+--   date_trunc('month', created_at) phụ thuộc TimeZone của session, nghĩa là
+--   cùng một dòng rơi vào tháng khác nhau tuỳ ai chạy. Với báo cáo doanh thu
+--   thì đó là lỗi, không phải tính năng. Đổi 'UTC' thành múi giờ nghiệp vụ nếu
+--   cần chốt theo giờ địa phương.
+CREATE MATERIALIZED VIEW monthly_paid_revenue AS
+SELECT (date_trunc('month', created_at AT TIME ZONE 'UTC'))::date AS month,
+       SUM(total) AS revenue
+FROM orders
+WHERE status = 'paid'
+GROUP BY 1;
 
--- Kết quả : 153.403 ms -> 21.423 ms (7,2x) | 9.568 -> 1.259 block | hết đổ đĩa
+--   UNIQUE index bắt buộc nếu muốn REFRESH ... CONCURRENTLY (không khoá đọc).
+CREATE UNIQUE INDEX idx_monthly_paid_revenue_month
+    ON monthly_paid_revenue (month);
+
+--   REFRESH mất ~63 ms, rẻ hơn MỘT lần chạy query gốc. Bản thân REFRESH cũng
+--   hưởng lợi từ partial index ở trên.
+--     REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_paid_revenue;
+--
+--   Đã đo rồi loại: CREATE STATISTICS (20.7 ms, đề bài cấm) và cột generated
+--   (33.6 ms, phải rewrite toàn bảng). Xem plans/q3_alternatives.txt.
 
 
 -- -------------------------------------------------------------
@@ -132,8 +158,8 @@ CREATE INDEX idx_orders_created_at ON orders (created_at);
 -- DROP INDEX IF EXISTS idx_orders_status_created_at;   -- Q1
 -- DROP INDEX IF EXISTS idx_orders_customer_id;          -- Q2
 -- DROP INDEX IF EXISTS idx_order_items_order_id;        -- Q2
--- DROP INDEX IF EXISTS idx_orders_paid_month;           -- Q3
--- DROP STATISTICS IF EXISTS stat_orders_month;          -- Q3
+-- DROP INDEX IF EXISTS idx_orders_paid_created_at;      -- Q3
+-- DROP MATERIALIZED VIEW IF EXISTS monthly_paid_revenue; -- Q3
 -- DROP INDEX IF EXISTS idx_customers_email_trgm;        -- Q4
 --   (giữ lại extension pg_trgm — xoá nó ảnh hưởng cả database)
 -- DROP INDEX IF EXISTS idx_orders_created_at;           -- Q6
