@@ -1,9 +1,7 @@
 -- Q3 V1 — BASELINE, query gốc, không thêm gì
 -- PostgreSQL 17.4 · shop_perf · work_mem 4MB · TimeZone Etc/UTC
--- orders 67 MB, visibility map 100% all-visible
--- Index có sẵn từ các bài khác: orders_pkey, idx_orders_status_created_at (Q1),
---   idx_orders_customer_id (Q2), idx_orders_created_at (Q6)
--- Median 5 lần chạy nóng: 133.862 ms  (135.435 136.286 132.054 133.862 129.403)
+-- orders 67 MB, visibility map 8604/8604 all-visible
+-- Median 5 lần chạy nóng: 134.768 ms
 
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT date_trunc('month', created_at) AS month, SUM(total) AS revenue
@@ -12,25 +10,26 @@ WHERE created_at >= '2024-01-01' AND status = 'paid'
 GROUP BY 1
 ORDER BY 1;
 
-GroupAggregate  (cost=46442.70..52078.95 rows=250500 width=40) (actual time=82.110..110.858 rows=25 loops=1)
+GroupAggregate  (cost=46333.57..51954.82 rows=249833 width=40) (actual time=83.901..117.146 rows=25 loops=1)
   Group Key: (date_trunc('month'::text, created_at))
   Buffers: shared hit=9571, temp read=769 written=772
-  ->  Sort  (cost=46442.70..47068.95 rows=250500 width=14) (actual time=81.829..94.470 rows=250983 loops=1)
+  ->  Sort  (cost=46333.57..46958.16 rows=249833 width=14) (actual time=83.555..98.145 rows=250983 loops=1)
         Sort Key: (date_trunc('month'::text, created_at))
         Sort Method: external merge  Disk: 6152kB
         Buffers: shared hit=9571, temp read=769 written=772
-        ->  Bitmap Heap Scan on orders  (cost=6708.05..19695.80 rows=250500 width=14) (actual time=10.685..57.617 rows=250983 loops=1)
+        ->  Bitmap Heap Scan on orders  (cost=6689.21..19665.29 rows=249833 width=14) (actual time=8.837..55.037 rows=250983 loops=1)
               Recheck Cond: ((status = 'paid'::text) AND (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone))
               Heap Blocks: exact=8604
               Buffers: shared hit=9568
-              ->  Bitmap Index Scan on idx_orders_status_created_at  (cost=0.00..6645.43 rows=250500 width=0) (actual time=9.793..9.793 rows=250983 loops=1)
+              ->  Bitmap Index Scan on idx_orders_status_created_at  (cost=0.00..6626.76 rows=249833 width=0) (actual time=8.114..8.114 rows=250983 loops=1)
                     Index Cond: ((status = 'paid'::text) AND (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone))
                     Buffers: shared hit=964
 Planning:
   Buffers: shared hit=171
-Planning Time: 0.343 ms
-Execution Time: 111.271 ms
+Planning Time: 0.251 ms
+Execution Time: 117.641 ms
 
 -- Phân rã: scan ~65 ms (49%), sort ~46 ms (34%), aggregate ~21 ms (16%).
--- Hai vấn đề: ước lượng số nhóm 253.033 vs thực tế 25, và WHERE khớp 25,1%
--- bảng nên vẫn phải vào heap lấy `total`.
+-- Hai vấn đề độc lập:
+--   aggregation — ước lượng số nhóm lệch 10.000 lần so với thực tế 25.
+--   I/O — WHERE khớp 25,1% bảng nên vẫn phải vào heap lấy `total`.

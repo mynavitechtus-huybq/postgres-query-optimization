@@ -9,7 +9,7 @@ Sáu query trên bộ dữ liệu 4 triệu dòng. PostgreSQL 17.4 (Docker), DBe
 |---|---|---|---|---:|---:|---:|
 | 1 | [Top 50 đơn `paid`](analysis/q1.md) | Quét 1M dòng rồi sort để lấy 50 | Composite index `(status, created_at DESC)` | 80,6 ms | 0,7 ms | 110× |
 | 2 | [Join 3 bảng theo khách](analysis/q2.md) | FK không có index → Hash Join quét 4M dòng | Index `orders.customer_id`, `order_items.order_id` | 232,9 ms | 1,2 ms | 195× |
-| 3 | [Doanh thu theo tháng](analysis/q3.md) | Aggregation, không phải I/O: ước lượng số nhóm lệch 10.000× → sort đổ đĩa | Partial covering index (95,4 ms) rồi pre-aggregation bằng materialized view | 133,9 ms | 0,034 ms | 3.937× |
+| 3 | [Doanh thu theo tháng](analysis/q3.md) | Aggregation, không phải I/O: ước lượng số nhóm lệch 10.000× → sort đổ đĩa | Ba tầng: partial index → viết lại query bỏ `GROUP BY` trên biểu thức → pre-aggregation | 134,8 ms | 28,8 ms | 4,68× |
 | 4 | [`ILIKE '%...%'`](analysis/q4.md) | B-tree không phục vụ được chuỗi con | GIN + `pg_trgm` | 17,3 ms | 0,8 ms | 22,8× |
 | 5 | [Correlated subquery](analysis/q5.md) | Không có vấn đề — index Q2 đã giải quyết | **Không thay đổi gì** | 27,5 ms | — | — |
 | 6 | [`date_trunc` trong `WHERE`](analysis/q6.md) | Hàm bọc lên cột → non-sargable | Viết lại thành khoảng + index `created_at` | 40,9 ms | 5,9 ms | 6,9× |
@@ -65,8 +65,9 @@ Mỗi `INSERT` phải cập nhật 5 index, và mọi query trên bảng đều 
 kế hoạch — ở Q2, `Planning Time` chiếm 48% tổng thời gian sau tối ưu. Ở hệ thống ghi
 nhiều đọc ít, vài index trong số này không đáng giữ.
 
-`monthly_paid_revenue` cần `REFRESH` (~63 ms) để không lệch dữ liệu. Con số 3.937× của
-Q3 chỉ đúng khi đọc nhiều hơn ghi, refresh mỗi lần đọc thì nó chậm hơn cả V2.
+Q3 dừng ở 28,8 ms để giữ dữ liệu realtime. Materialized view đưa xuống 0,040 ms nhưng
+cần lịch `REFRESH` (~60 ms) và chốt kết quả theo UTC, nên để làm tuỳ chọn cho dashboard
+chứ không phải giải pháp mặc định.
 
 ## Còn nợ
 

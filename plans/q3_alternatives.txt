@@ -1,93 +1,90 @@
 -- Q3 — HAI PHƯƠNG ÁN ĐÃ ĐO RỒI LOẠI
--- Đo trên cùng trạng thái bảng với V1/V2/V3 để so sánh công bằng.
+-- Đo trên cùng trạng thái bảng với V1..V4.
 
 -- =============================================================
--- ALT-A — CREATE STATISTICS trên biểu thức  (BỊ LOẠI: đề bài cấm)
+-- ALT-A — CREATE STATISTICS trên biểu thức  (LOẠI: đề bài cấm)
 -- =============================================================
 -- CREATE STATISTICS tmp_stat ON (date_trunc('month', created_at)) FROM orders;
 -- ANALYZE orders;
--- Chạy kèm partial index của V2.
--- Median 5 lần: 20.719 ms  (20.719 21.010 20.155 21.997 20.124)
+-- Chạy kèm partial index của V2. Median 5 lần: 20.594 ms (6,54x)
 
-Finalize GroupAggregate  (cost=8635.41..8641.99 rows=25 width=40) (actual time=19.749..20.731 rows=25 loops=1)
+Finalize GroupAggregate  (cost=8556.52..8563.11 rows=25 width=40) (actual time=19.750..20.769 rows=25 loops=1)
   Group Key: (date_trunc('month'::text, created_at))
   Buffers: shared hit=983
-  ->  Gather Merge  (cost=8635.41..8641.24 rows=50 width=40) (actual time=19.745..20.711 rows=73 loops=1)
+  ->  Gather Merge  (cost=8556.52..8562.36 rows=50 width=40) (actual time=19.745..20.744 rows=73 loops=1)
         Workers Planned: 2
         Workers Launched: 2
         Buffers: shared hit=983
-        ->  Sort  (cost=7635.38..7635.45 rows=25 width=40) (actual time=18.486..18.487 rows=24 loops=3)
+        ->  Sort  (cost=7556.50..7556.56 rows=25 width=40) (actual time=18.626..18.633 rows=24 loops=3)
               Sort Key: (date_trunc('month'::text, created_at))
               Sort Method: quicksort  Memory: 27kB
               Buffers: shared hit=983
               Worker 0:  Sort Method: quicksort  Memory: 27kB
               Worker 1:  Sort Method: quicksort  Memory: 27kB
-              ->  Partial HashAggregate  (cost=7634.43..7634.80 rows=25 width=40) (actual time=18.460..18.469 rows=24 loops=3)
+              ->  Partial HashAggregate  (cost=7555.55..7555.92 rows=25 width=40) (actual time=18.610..18.614 rows=24 loops=3)
                     Group Key: date_trunc('month'::text, created_at)
                     Batches: 1  Memory Usage: 32kB
                     Buffers: shared hit=967
                     Worker 0:  Batches: 1  Memory Usage: 32kB
                     Worker 1:  Batches: 1  Memory Usage: 32kB
-                    ->  Parallel Index Only Scan using idx_orders_paid_created_at on orders  (cost=0.42..7104.57 rows=105972 width=14) (actual time=0.020..10.765 rows=83661 loops=3)
+                    ->  Parallel Index Only Scan using idx_orders_paid_created_at on orders  (cost=0.42..7036.80 rows=103750 width=14) (actual time=0.018..10.863 rows=83661 loops=3)
                           Index Cond: (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone)
                           Heap Fetches: 0
                           Buffers: shared hit=967
 Planning:
   Buffers: shared hit=198
-Planning Time: 0.311 ms
-Execution Time: 20.771 ms
+Planning Time: 0.381 ms
+Execution Time: 20.821 ms
 
 -- Ước lượng về 25 => HashAggregate => hết Sort, hết đổ đĩa.
--- Nhanh hơn V2 gần 5 lần, giữ được realtime. Loại vì ràng buộc đề bài.
+-- Nhanh nhất trong các phương án realtime. Loại vì ràng buộc đề bài.
 
 -- =============================================================
--- ALT-B — Cột generated + thống kê cột thường  (BỊ LOẠI: chi phí schema)
+-- ALT-B — Cột generated  (LOẠI: chi phí schema)
 -- =============================================================
 -- ALTER TABLE orders ADD COLUMN created_month date
 --   GENERATED ALWAYS AS ((date_trunc('month', created_at AT TIME ZONE 'UTC'))::date) STORED;
 -- VACUUM (ANALYZE) orders;
 --
--- Ý tưởng: biến biểu thức thành CỘT THẬT. Postgres thu thập n_distinct cho cột
--- thường => không cần CREATE STATISTICS mà vẫn sửa được ước lượng.
+-- Biến biểu thức thành cột thật để Postgres thu thập n_distinct như cột thường:
 --   SELECT n_distinct FROM pg_stats WHERE attname='created_month';  -->  25
---
--- Query phải đổi: GROUP BY created_month thay cho date_trunc(...).
--- Kiểm chứng tương đương (session UTC): 0 dòng lệch.
--- Median 5 lần: 33.589 ms  (33.200 33.589 33.410 40.431 34.095)
+-- Query phải đổi: GROUP BY created_month.
+-- Median 5 lần: 33.941 ms (3,97x)
 
-Finalize GroupAggregate  (cost=17369.46..17375.98 rows=25 width=36) (actual time=32.284..33.507 rows=25 loops=1)
+Finalize GroupAggregate  (cost=17370.43..17376.95 rows=25 width=36) (actual time=33.048..34.273 rows=25 loops=1)
   Group Key: created_month
   Buffers: shared hit=3216 read=6400
-  ->  Gather Merge  (cost=17369.46..17375.29 rows=50 width=36) (actual time=32.279..33.485 rows=75 loops=1)
+  ->  Gather Merge  (cost=17370.43..17376.27 rows=50 width=36) (actual time=33.041..34.243 rows=75 loops=1)
         Workers Planned: 2
         Workers Launched: 2
         Buffers: shared hit=3216 read=6400
-        ->  Sort  (cost=16369.43..16369.50 rows=25 width=36) (actual time=31.079..31.081 rows=25 loops=3)
+        ->  Sort  (cost=16370.41..16370.47 rows=25 width=36) (actual time=31.797..31.798 rows=25 loops=3)
               Sort Key: created_month
               Sort Method: quicksort  Memory: 27kB
               Buffers: shared hit=3216 read=6400
               Worker 0:  Sort Method: quicksort  Memory: 27kB
               Worker 1:  Sort Method: quicksort  Memory: 27kB
-              ->  Partial HashAggregate  (cost=16368.54..16368.85 rows=25 width=36) (actual time=31.062..31.066 rows=25 loops=3)
+              ->  Partial HashAggregate  (cost=16369.51..16369.83 rows=25 width=36) (actual time=31.780..31.784 rows=25 loops=3)
                     Group Key: created_month
                     Batches: 1  Memory Usage: 32kB
                     Buffers: shared hit=3200 read=6400
                     Worker 0:  Batches: 1  Memory Usage: 32kB
                     Worker 1:  Batches: 1  Memory Usage: 32kB
-                    ->  Parallel Seq Scan on orders  (cost=0.00..15850.00 rows=103708 width=10) (actual time=0.024..22.160 rows=83661 loops=3)
+                    ->  Parallel Seq Scan on orders  (cost=0.00..15850.00 rows=103903 width=10) (actual time=0.022..22.879 rows=83661 loops=3)
                           Filter: ((created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone) AND (status = 'paid'::text))
                           Rows Removed by Filter: 249672
                           Buffers: shared hit=3200 read=6400
 Planning:
   Buffers: shared hit=207
-Planning Time: 0.323 ms
-Execution Time: 33.550 ms
+Planning Time: 0.345 ms
+Execution Time: 34.329 ms
 
 -- Loại vì:
---   ALTER TABLE rewrite toàn bảng 3.875 ms, giữ ACCESS EXCLUSIVE lock.
+--   ALTER TABLE rewrite toàn bảng 2.157 ms, giữ ACCESS EXCLUSIVE lock.
 --   Bảng phình 67 -> 75 MB, DROP COLUMN không thu hồi được (phải VACUUM FULL).
 --   Mọi INSERT/UPDATE phải tính thêm biểu thức và ghi thêm cột.
---   Chậm hơn V3 khoảng 1.000 lần cho workload báo cáo mà nó nhắm tới.
+--   Chậm hơn V3 mà lại đắt hơn nhiều về schema.
+--   Chốt UTC nên lệch múi giờ giống V4.
 --
--- Planner không dùng index nào cho ALT-B mà chọn Parallel Seq Scan.
+-- Planner không dùng index nào mà chọn Parallel Seq Scan.
 -- Ép bằng enable_seqscan=off cho 87.578 ms.

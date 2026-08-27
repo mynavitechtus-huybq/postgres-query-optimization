@@ -38,24 +38,30 @@ CREATE INDEX idx_order_items_order_id ON order_items (order_id);
 -- -------------------------------------------------------------
 -- Q3 — Doanh thu theo tháng
 --
--- Baseline 133.9 ms có hai vấn đề độc lập:
+-- Baseline 134.8 ms có hai vấn đề độc lập:
 --   aggregation — ước lượng số nhóm 253.033 vs thực tế 25 (Postgres không có
 --     thống kê cho biểu thức) => loại HashAggregate => Sort 250.983 dòng =>
 --     vượt work_mem 4MB => đổ đĩa.
 --   I/O — WHERE khớp 25,1% bảng, index (status, created_at) vẫn phải vào heap
 --     lấy `total` => Heap Blocks: exact=8604.
+--
+-- Tối ưu ở ba tầng, đo tách từng tầng:
+--   V2 access path  96.3 ms  1.40x   index bên dưới
+--   V3 query        28.8 ms  4.68x   queries/q3_after.sql  <-- phương án chính
+--   V4 data model   0.040 ms 3369x   matview bên dưới, đổi lại phải refresh
 
--- V2 — chữa phần I/O, query giữ nguyên. 133.9 -> 95.4 ms, buffers 9.571 -> 968.
+-- V2 — partial covering index. Query giữ nguyên.
 -- Partial nên chỉ chứa ~25% số dòng: 7744 kB thay vì 41 MB.
 -- Kiểm chứng Index Only Scan bằng `Heap Fetches: 0` trong plan.
+-- V3 dùng lại đúng index này.
 CREATE INDEX idx_orders_paid_created_at
     ON orders (created_at)
     INCLUDE (total)
     WHERE status = 'paid';
 
--- V3 — chữa phần aggregation bằng cách gộp sẵn. 95.4 -> 0.034 ms, 25 dòng, 40 kB.
+-- V4 — pre-aggregation. Chỉ thêm nếu chấp nhận dữ liệu cũ theo chu kỳ refresh.
 -- Chốt 'UTC' vì date_trunc trên timestamptz phụ thuộc TimeZone của session:
--- chạy ở +07 cho kết quả khác hẳn. Đổi sang múi giờ nghiệp vụ nếu cần.
+-- chạy ở +07 cho kết quả lệch hoàn toàn so với query gốc. V3 không có vấn đề này.
 CREATE MATERIALIZED VIEW monthly_paid_revenue AS
 SELECT (date_trunc('month', created_at AT TIME ZONE 'UTC'))::date AS month,
        SUM(total) AS revenue
@@ -67,11 +73,11 @@ GROUP BY 1;
 CREATE UNIQUE INDEX idx_monthly_paid_revenue_month
     ON monthly_paid_revenue (month);
 
--- REFRESH ~63 ms, rẻ hơn một lần chạy query gốc, và cũng dùng partial index ở trên.
+-- REFRESH ~60 ms, rẻ hơn một lần chạy query gốc, và cũng dùng partial index ở trên.
 --   REFRESH MATERIALIZED VIEW CONCURRENTLY monthly_paid_revenue;
 --
--- Đã đo rồi loại: CREATE STATISTICS (20.7 ms, đề bài cấm) và cột generated
--- (33.6 ms, rewrite toàn bảng). Xem plans/q3_alternatives.txt.
+-- Đã đo rồi loại: CREATE STATISTICS (20.6 ms, đề bài cấm) và cột generated
+-- (33.9 ms, rewrite toàn bảng). Xem plans/q3_alternatives.txt.
 
 
 -- -------------------------------------------------------------
