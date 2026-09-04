@@ -9,15 +9,15 @@ Sáu query trên bộ dữ liệu 4 triệu dòng. PostgreSQL 17.4 (Docker), DBe
 |---|---|---|---|---:|---:|---:|
 | 1 | [Top 50 đơn `paid`](analysis/q1.md) | Quét 1M dòng rồi sort để lấy 50 | Composite index `(status, created_at DESC)` | 80,6 ms | 0,7 ms | 110× |
 | 2 | [Join 3 bảng theo khách](analysis/q2.md) | FK không có index → Hash Join quét 4M dòng | Index `orders.customer_id`, `order_items.order_id` | 232,9 ms | 1,2 ms | 195× |
-| 3 | [Doanh thu theo tháng](analysis/q3.md) | Không có thống kê cho biểu thức `GROUP BY`, ước lượng lệch 10.000× → sort đổ đĩa | `CREATE STATISTICS` + covering index `INCLUDE (total)` | 153,4 ms | 21,4 ms | 7,2× |
+| 3 | [Doanh thu theo tháng](analysis/q3.md) | Aggregation, không phải I/O: ước lượng số nhóm lệch 10.000× → sort đổ đĩa | Ba tầng: partial index → viết lại query bỏ `GROUP BY` trên biểu thức → pre-aggregation | 134,8 ms | 28,8 ms | 4,68× |
 | 4 | [`ILIKE '%...%'`](analysis/q4.md) | B-tree không phục vụ được chuỗi con | GIN + `pg_trgm` | 17,3 ms | 0,8 ms | 22,8× |
 | 5 | [Correlated subquery](analysis/q5.md) | Không có vấn đề — index Q2 đã giải quyết | **Không thay đổi gì** | 27,5 ms | — | — |
 | 6 | [`date_trunc` trong `WHERE`](analysis/q6.md) | Hàm bọc lên cột → non-sargable | Viết lại thành khoảng + index `created_at` | 40,9 ms | 5,9 ms | 6,9× |
 
-**Chỉ 2 trong 6 bài được sửa bằng cách thêm index cho cột bị thiếu.** Q3 sửa bằng thống
-kê, Q4 phải đổi loại index, Q5 không sửa gì, Q6 sửa cách viết query. Tiếp cận cả sáu
-bằng cùng một phản xạ "chậm thì thêm index" thì ba bài không được sửa và một bài bị làm
-hỏng.
+Chỉ 2 trong 6 bài được sửa bằng cách thêm index cho cột bị thiếu. Q3 phải bỏ hẳn việc
+aggregate lúc chạy query, Q4 phải đổi loại index, Q5 không sửa gì, Q6 sửa cách viết
+query. Tiếp cận cả sáu bằng cùng một phản xạ "chậm thì thêm index" thì ba bài không
+được sửa và một bài bị làm hỏng.
 
 ## Cấu trúc
 
@@ -55,19 +55,24 @@ orders (bảng)                   67 MB
   orders_pkey                   21 MB
   idx_orders_status_created_at  32 MB   Q1
   idx_orders_customer_id       7,8 MB   Q2
-  idx_orders_paid_month         41 MB   Q3
+  idx_orders_paid_created_at   7,8 MB   Q3
   idx_orders_created_at         21 MB   Q6
-  tổng index                   123 MB   — gần gấp đôi dữ liệu
+  tổng index                    90 MB
+monthly_paid_revenue            40 kB   Q3, materialized view
 ```
 
 Mỗi `INSERT` phải cập nhật 5 index, và mọi query trên bảng đều trả thêm thời gian lập
 kế hoạch — ở Q2, `Planning Time` chiếm 48% tổng thời gian sau tối ưu. Ở hệ thống ghi
 nhiều đọc ít, vài index trong số này không đáng giữ.
 
+Q3 dừng ở 28,8 ms để giữ dữ liệu realtime. Materialized view đưa xuống 0,040 ms nhưng
+cần lịch `REFRESH` (~60 ms) và chốt kết quả theo UTC, nên để làm tuỳ chọn cho dashboard
+chứ không phải giải pháp mặc định.
+
 ## Còn nợ
 
-- `idx_orders_status_created_at` (Q1) là tiền tố của `idx_orders_paid_month` (Q3) nên có
-  thể đã thừa. Cần bỏ ra rồi đo lại Q1.
+- Q3 chọn lịch `REFRESH` cho `monthly_paid_revenue` theo mức chấp nhận dữ liệu cũ của
+  nghiệp vụ; hiện chưa gắn scheduler.
 - `order_items.product_id` chưa có index. Q2 không cần, nhưng `DELETE FROM products` sẽ
   quét toàn bảng để kiểm tra ràng buộc.
 - Q6 dùng `SELECT *` nên vẫn tốn 1.219 block đọc bảng.

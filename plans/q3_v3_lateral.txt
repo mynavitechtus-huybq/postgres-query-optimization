@@ -1,0 +1,66 @@
+-- Q3 V3 — TẦNG QUERY: viết lại để bỏ GROUP BY trên biểu thức
+--
+-- Chạy kèm partial index của V2.
+-- Median 5 lần chạy nóng: 28.791 ms (4,68x so với V1)
+--
+-- Ý tưởng: planner không đoán được `GROUP BY date_trunc(...)` ra bao nhiêu
+-- nhóm, nên bỏ hẳn GROUP BY đó đi. Sinh danh sách mốc tháng bằng
+-- generate_series rồi với mỗi tháng cộng riêng qua LATERAL.
+-- Không còn gom nhóm trên biểu thức => không còn chỗ để đoán sai
+-- => không còn Sort 250.983 dòng => không còn đổ đĩa.
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT m.month, x.revenue
+FROM generate_series(
+       date_trunc('month', TIMESTAMPTZ '2024-01-01'),
+       (SELECT max(created_at) FROM orders),
+       interval '1 month') AS m(month)
+CROSS JOIN LATERAL (
+  SELECT SUM(o.total) AS revenue
+  FROM orders o
+  WHERE o.status = 'paid'
+    AND o.created_at >= m.month
+    AND o.created_at <  m.month + interval '1 month'
+) x
+WHERE x.revenue IS NOT NULL
+ORDER BY m.month;
+
+Sort  (cost=48607.79..48610.29 rows=1000 width=40) (actual time=25.635..25.637 rows=25 loops=1)
+  Sort Key: m.month
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=1065
+  InitPlan 2
+    ->  Result  (cost=0.45..0.46 rows=1 width=8) (actual time=0.014..0.015 rows=1 loops=1)
+          Buffers: shared hit=4
+          InitPlan 1
+            ->  Limit  (cost=0.42..0.45 rows=1 width=8) (actual time=0.013..0.013 rows=1 loops=1)
+                  Buffers: shared hit=4
+                  ->  Index Only Scan Backward using idx_orders_created_at on orders  (cost=0.42..25980.42 rows=1000000 width=8) (actual time=0.012..0.013 rows=1 loops=1)
+                        Heap Fetches: 0
+                        Buffers: shared hit=4
+  ->  Nested Loop  (cost=48.53..48557.51 rows=1000 width=40) (actual time=0.302..25.619 rows=25 loops=1)
+        Buffers: shared hit=1062
+        ->  Function Scan on generate_series m  (cost=0.01..10.01 rows=1000 width=8) (actual time=0.025..0.027 rows=32 loops=1)
+              Buffers: shared hit=4
+        ->  Aggregate  (cost=48.53..48.54 rows=1 width=32) (actual time=0.799..0.799 rows=1 loops=32)
+              Filter: (sum(o.total) IS NOT NULL)
+              Rows Removed by Filter: 0
+              Buffers: shared hit=1058
+              ->  Index Only Scan using idx_orders_paid_created_at on orders o  (cost=0.42..45.40 rows=1249 width=6) (actual time=0.003..0.429 rows=7843 loops=32)
+                    Index Cond: ((created_at >= m.month) AND (created_at < (m.month + '1 mon'::interval)))
+                    Heap Fetches: 0
+                    Buffers: shared hit=1058
+Planning:
+  Buffers: shared hit=179
+Planning Time: 0.297 ms
+Execution Time: 25.688 ms
+
+-- Không còn node Sort trên 250.983 dòng, không còn temp read/written.
+-- Mỗi tháng là một Index Only Scan trên khoảng liền mạch, Heap Fetches: 0.
+-- loops=32 vì generate_series sinh 32 mốc tháng từ 2024-01, trong đó 7 tháng
+-- đầu không có dữ liệu (bảng bắt đầu từ 2024-08-25) và bị WHERE loại.
+--
+-- Kiểm chứng tương đương với query gốc:
+--   session Etc/UTC            : 25 / 25 dòng, 0 dòng lệch
+--   session Asia/Ho_Chi_Minh   : 25 / 25 dòng, 0 dòng lệch
+-- Đúng ở mọi múi giờ vì vẫn theo TimeZone của session giống hệt query gốc.

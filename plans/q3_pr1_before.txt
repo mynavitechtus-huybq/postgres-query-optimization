@@ -1,3 +1,20 @@
+-- =============================================================
+-- BẢN ĐO CỦA LẦN LÀM TRƯỚC (PR #1) — giữ lại làm bằng chứng.
+--
+-- KHÔNG so trực tiếp với plans/q3_v1_baseline.txt .. q3_v4_matview.txt,
+-- vì trạng thái bảng và index kèm theo đều khác:
+--
+--                    lần trước (file này)        lần này (V1..V4)
+--   bảng orders      chưa VACUUM FULL            đã VACUUM FULL + VACUUM
+--   baseline         153.403 ms                  134.768 ms
+--   index kèm theo   idx_orders_paid_month       idx_orders_paid_created_at
+--                    (status, created_at)        (created_at) WHERE status=paid
+--                    INCLUDE (total), 41 MB      INCLUDE (total), 7744 kB
+--
+-- Giải pháp lần trước dùng CREATE STATISTICS. Sau đó được thay bằng hướng
+-- viết lại query (V3) theo đề nghị của leader. Xem analysis/q3.md.
+-- =============================================================
+
 -- Q3 BEFORE — PostgreSQL 17.4, shop_perf
 -- Index hiện có trên orders: orders_pkey, idx_orders_status_created_at, idx_orders_customer_id
 -- work_mem = 4MB
