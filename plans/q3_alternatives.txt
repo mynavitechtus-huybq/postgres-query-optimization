@@ -19,6 +19,11 @@
 --               (created_at) INCLUDE (total) WHERE status='paid', 7744 kB
 --               20.594 ms, đo cùng trạng thái bảng với V1..V4
 -- Hai con số gần nhau nhưng không phải đo lại cùng một cấu hình.
+--
+-- Bản đo gốc của lần trước giữ nguyên ở:
+--   plans/q3_pr1_before.txt              trước khi tối ưu
+--   plans/q3_pr1_stage1_stats_only.txt   chỉ thêm CREATE STATISTICS
+--   plans/q3_pr1_after.txt               thêm cả covering index
 
 Finalize GroupAggregate  (cost=8556.52..8563.11 rows=25 width=40) (actual time=19.750..20.769 rows=25 loops=1)
   Group Key: (date_trunc('month'::text, created_at))
