@@ -26,7 +26,7 @@
 
   ALT-A CREATE STATISTICS      20,594 ms   111,827 ms        5,4 lần   (đề bài cấm)
 
-  REFRESH materialized view    57–61 ms    340–364 ms        5,7 lần
+  REFRESH materialized view    57–61 ms    267–364 ms        khoảng 5 lần
   build materialized view      108,8 ms      409,0 ms        3,8 lần
 
 -- Nhận xét:
