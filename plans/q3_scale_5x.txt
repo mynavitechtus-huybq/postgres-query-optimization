@@ -1,0 +1,160 @@
+-- =============================================================
+-- Q3 — PHÉP ĐO Ở QUY MÔ GẤP 5 LẦN
+--
+-- Database riêng `shop_perf_5x`, dựng bằng sql/03_scale_test.sql.
+-- Chỉ có customers và orders vì Q3 không đụng tới products/order_items.
+--
+--                    shop_perf        shop_perf_5x
+--   customers            50.000            250.000
+--   orders            1.000.000          5.000.000
+--   đơn 'paid'          250.983          1.250.965
+--   bảng orders           67 MB             336 MB
+--   khoảng thời gian     25 tháng          25 tháng
+--
+-- Cùng cấu hình: work_mem 4MB, TimeZone UTC, bảng đã VACUUM (ANALYZE),
+-- visibility map 43019/43019. Index nền giống dự án thật:
+-- orders_pkey, idx_orders_status_created_at, idx_orders_created_at.
+--
+-- Mỗi số là trung vị của 8 lần chạy, bỏ 2 lần đầu.
+-- =============================================================
+
+                                so 1x        so 5x     tăng khi dữ liệu x5
+  V1  không tối ưu           134,768 ms   797,429 ms        5,9 lần
+  V2  partial covering index  96,267 ms   554,479 ms        5,8 lần
+  V3  viết lại bằng LATERAL   28,791 ms   204,409 ms        7,1 lần
+  V4  materialized view        0,040 ms     0,038 ms        không đổi
+
+  ALT-A CREATE STATISTICS      20,594 ms   111,827 ms        5,4 lần   (đề bài cấm)
+
+  REFRESH materialized view    57–61 ms    267–364 ms        khoảng 5 lần
+  build materialized view      108,8 ms      409,0 ms        3,8 lần
+
+-- Nhận xét:
+--   V1, V2, V3 đều tăng xấp xỉ tuyến tính theo lượng dữ liệu, vì cả ba vẫn
+--   phải đọc và cộng từng dòng.
+--   V4 là cách duy nhất KHÔNG tăng, vì nó luôn chỉ đọc đúng 25 dòng bất kể
+--   bảng gốc to đến đâu. Đổi lại, chi phí REFRESH thì tăng tuyến tính.
+--   Khoảng cách giữa V3 và V2 giữ nguyên ở cả hai quy mô (V3 nhanh hơn V2
+--   khoảng 2,7 đến 3,3 lần), nên kết luận chọn V3 không phụ thuộc quy mô.
+
+
+-- ============ V1 — không tối ưu ============
+GroupAggregate  (cost=242961.24..270644.41 rows=1230363 width=40) (actual time=667.978..848.281 rows=25 loops=1)
+  Group Key: (date_trunc('month'::text, created_at))
+  Buffers: shared hit=3 read=47815, temp read=7657 written=7674
+  ->  Sort  (cost=242961.24..246037.15 rows=1230363 width=14) (actual time=661.896..739.155 rows=1250965 loops=1)
+        Sort Key: (date_trunc('month'::text, created_at))
+        Sort Method: external merge  Disk: 30672kB
+        Buffers: shared hit=3 read=47815, temp read=7657 written=7674
+        ->  Bitmap Heap Scan on orders  (cost=32927.65..97478.01 rows=1230363 width=14) (actual time=76.905..462.302 rows=1250965 loops=1)
+              Recheck Cond: ((status = 'paid'::text) AND (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone))
+              Heap Blocks: exact=43019
+              Buffers: shared read=47815
+              ->  Bitmap Index Scan on idx_orders_status_created_at  (cost=0.00..32620.06 rows=1230363 width=0) (actual time=68.570..68.570 rows=1250965 loops=1)
+                    Index Cond: ((status = 'paid'::text) AND (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone))
+                    Buffers: shared read=4796
+Planning:
+  Buffers: shared hit=121 read=38
+Planning Time: 0.435 ms
+JIT:
+  Functions: 9
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 0.275 ms (Deform 0.115 ms), Inlining 0.000 ms, Optimization 0.206 ms, Emission 3.302 ms, Total 3.783 ms
+Execution Time: 859.566 ms
+
+
+-- ============ V2 — partial covering index ============
+GroupAggregate  (cost=190060.46..217855.36 rows=1235329 width=40) (actual time=307.165..465.146 rows=25 loops=1)
+  Group Key: (date_trunc('month'::text, created_at))
+  Buffers: shared hit=462140, temp read=7657 written=7674
+  ->  Sort  (cost=190060.46..193148.78 rows=1235329 width=14) (actual time=302.606..368.582 rows=1250965 loops=1)
+        Sort Key: (date_trunc('month'::text, created_at))
+        Sort Method: external merge  Disk: 30672kB
+        Buffers: shared hit=462140, temp read=7657 written=7674
+        ->  Index Only Scan using idx_orders_paid_created_at on orders  (cost=0.43..43955.01 rows=1235329 width=14) (actual time=2.408..176.756 rows=1250965 loops=1)
+              Index Cond: (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone)
+              Heap Fetches: 0
+              Buffers: shared hit=462137
+Planning:
+  Buffers: shared hit=174
+Planning Time: 0.294 ms
+JIT:
+  Functions: 7
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 0.153 ms (Deform 0.041 ms), Inlining 0.000 ms, Optimization 0.124 ms, Emission 2.286 ms, Total 2.564 ms
+Execution Time: 474.990 ms
+
+
+-- ============ V3 — viết lại bằng LATERAL ============
+Sort  (cost=239495.30..239497.80 rows=1000 width=40) (actual time=196.513..196.515 rows=25 loops=1)
+  Sort Key: m.month
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=462240
+  InitPlan 2
+    ->  Result  (cost=0.46..0.47 rows=1 width=8) (actual time=0.023..0.024 rows=1 loops=1)
+          Buffers: shared hit=4
+          InitPlan 1
+            ->  Limit  (cost=0.43..0.46 rows=1 width=8) (actual time=0.020..0.020 rows=1 loops=1)
+                  Buffers: shared hit=4
+                  ->  Index Only Scan Backward using idx_orders_created_at on orders  (cost=0.43..129852.15 rows=4999981 width=8) (actual time=0.018..0.018 rows=1 loops=1)
+                        Heap Fetches: 0
+                        Buffers: shared hit=4
+  ->  Nested Loop  (cost=239.42..239445.01 rows=1000 width=40) (actual time=9.536..196.487 rows=25 loops=1)
+        Buffers: shared hit=462237
+        ->  Function Scan on generate_series m  (cost=0.01..10.01 rows=1000 width=8) (actual time=3.253..3.259 rows=33 loops=1)
+              Buffers: shared hit=4
+        ->  Aggregate  (cost=239.42..239.43 rows=1 width=32) (actual time=5.855..5.855 rows=1 loops=33)
+              Filter: (sum(o.total) IS NOT NULL)
+              Rows Removed by Filter: 0
+              Buffers: shared hit=462233
+              ->  Index Only Scan using idx_orders_paid_created_at on orders o  (cost=0.43..223.97 rows=6177 width=6) (actual time=0.004..3.611 rows=37908 loops=33)
+                    Index Cond: ((created_at >= m.month) AND (created_at < (m.month + '1 mon'::interval)))
+                    Heap Fetches: 0
+                    Buffers: shared hit=462233
+Planning:
+  Buffers: shared hit=166
+Planning Time: 0.310 ms
+JIT:
+  Functions: 13
+  Options: Inlining false, Optimization false, Expressions true, Deforming true
+  Timing: Generation 0.222 ms (Deform 0.030 ms), Inlining 0.000 ms, Optimization 0.162 ms, Emission 3.060 ms, Total 3.443 ms
+Execution Time: 206.086 ms
+
+
+-- ============ ALT-A — CREATE STATISTICS (tham chiếu, đề bài cấm) ============
+Finalize GroupAggregate  (cost=38645.67..38652.26 rows=25 width=40) (actual time=112.089..113.734 rows=25 loops=1)
+  Group Key: (date_trunc('month'::text, created_at))
+  Buffers: shared hit=462141
+  ->  Gather Merge  (cost=38645.67..38651.51 rows=50 width=40) (actual time=112.084..113.712 rows=75 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=462141
+        ->  Sort  (cost=37645.65..37645.71 rows=25 width=40) (actual time=111.140..111.141 rows=25 loops=3)
+              Sort Key: (date_trunc('month'::text, created_at))
+              Sort Method: quicksort  Memory: 27kB
+              Buffers: shared hit=462141
+              Worker 0:  Sort Method: quicksort  Memory: 27kB
+              Worker 1:  Sort Method: quicksort  Memory: 27kB
+              ->  Partial HashAggregate  (cost=37644.69..37645.07 rows=25 width=40) (actual time=111.120..111.128 rows=25 loops=3)
+                    Group Key: date_trunc('month'::text, created_at)
+                    Batches: 1  Memory Usage: 32kB
+                    Buffers: shared hit=462125
+                    Worker 0:  Batches: 1  Memory Usage: 32kB
+                    Worker 1:  Batches: 1  Memory Usage: 32kB
+                    ->  Parallel Index Only Scan using idx_orders_paid_created_at on orders  (cost=0.43..35053.67 rows=518205 width=14) (actual time=0.013..72.090 rows=416988 loops=3)
+                          Index Cond: (created_at >= '2024-01-01 00:00:00+00'::timestamp with time zone)
+                          Heap Fetches: 0
+                          Buffers: shared hit=462125
+Planning:
+  Buffers: shared hit=185
+Planning Time: 0.338 ms
+Execution Time: 113.782 ms
+
+
+-- ============ Kiểm chứng kết quả ở quy mô 5x ============
+--                          dong_goc  dong_v3  dong_v4  lech_v3  lech_v4
+--   Etc/UTC                     25       25       25        0        0
+--   Asia/Ho_Chi_Minh            25       25       25        0       50
+--   tổng doanh thu: 637.603.432,21
+--
+-- Giống hệt kết luận ở quy mô 1x: V3 đúng ở mọi múi giờ, V4 chỉ đúng ở UTC.
