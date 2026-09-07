@@ -10,6 +10,9 @@ Sáu query trên bộ dữ liệu 4 triệu dòng. PostgreSQL 17.4 (Docker), DBe
 | 1 | [Top 50 đơn `paid`](analysis/q1.md) | Quét 1M dòng rồi sort để lấy 50 | Composite index `(status, created_at DESC)` | 80,6 ms | 0,7 ms | 110× |
 | 2 | [Join 3 bảng theo khách](analysis/q2.md) | FK không có index → Hash Join quét 4M dòng | Index `orders.customer_id`, `order_items.order_id` | 232,9 ms | 1,2 ms | 195× |
 | 3 | [Doanh thu theo tháng](analysis/q3.md) | Aggregation, không phải I/O: ước lượng số nhóm lệch 10.000× → sort đổ đĩa | Ba tầng: partial index → viết lại query bỏ `GROUP BY` trên biểu thức → pre-aggregation | 134,8 ms | 28,8 ms | 4,68× |
+
+Q3 được kiểm tra lại trên bộ dữ liệu gấp 5 lần (5 triệu đơn) để xác nhận kết luận không
+phụ thuộc quy mô — xem [`plans/q3_scale_5x.txt`](plans/q3_scale_5x.txt).
 | 4 | [`ILIKE '%...%'`](analysis/q4.md) | B-tree không phục vụ được chuỗi con | GIN + `pg_trgm` | 17,3 ms | 0,8 ms | 22,8× |
 | 5 | [Correlated subquery](analysis/q5.md) | Không có vấn đề — index Q2 đã giải quyết | **Không thay đổi gì** | 27,5 ms | — | — |
 | 6 | [`date_trunc` trong `WHERE`](analysis/q6.md) | Hàm bọc lên cột → non-sargable | Viết lại thành khoảng + index `created_at` | 40,9 ms | 5,9 ms | 6,9× |
@@ -25,6 +28,7 @@ query. Tiếp cận cả sáu bằng cùng một phản xạ "chậm thì thêm 
 sql/00_schema.sql     tạo DB + bảng (không index ngoài PK)
 sql/01_seed.sql       sinh dữ liệu + ANALYZE
 sql/02_indexes.sql    toàn bộ thay đổi schema, kèm lý do và khối rollback
+sql/03_scale_test.sql dựng bộ dữ liệu gấp 5 lần để kiểm tra lại kết luận Q3
 sql/queries/          query gốc và query đã viết lại
 plans/*.txt           EXPLAIN (ANALYZE, BUFFERS) thô, kể cả của phương án thất bại
 analysis/qN.md        phân tích từng query
